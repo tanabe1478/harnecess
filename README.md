@@ -1,6 +1,6 @@
 # harnecess
 
-Multi-agent orchestration for GitHub Issue → PR pipelines.
+Claude Code multi-agent development system. Lead, Planner, Builder, Checker, Writer agents collaborate via tmux sessions and file-based mailbox communication to plan, implement, review, and document code changes.
 
 ## Architecture
 
