@@ -61,8 +61,13 @@ Phase 1: Plan      — Lead → Planner (Plan Mode, user observes in csm)
 Phase 2: Implement — Lead → Builder (TDD, Opus)
 Phase 3: Review    — Lead → Checker (code review)
 Phase 4: PR        — Lead creates PR
-Phase 5: Document  — Lead → Writer (ADR, specs, README)
+Phase 5: Document  — Lead → Writer (ADR, specs, README) *条件付き
 ```
+
+Writer は plan.yaml の `doc_hints` に基づいて発動します:
+- `adr_needed: true` → ADR を生成
+- `specs_affected` が非空 → 関連 spec を更新
+- 対象リポジトリに `docs/adr/` や `docs/specs/` がない場合はスキップされます
 
 ## Agents
 
@@ -72,7 +77,7 @@ Phase 5: Document  — Lead → Writer (ADR, specs, README)
 | planner | Opus | --permission-mode plan | Issue analysis, plan.yaml creation |
 | builder | Opus | --dangerously-skip-permissions | Code implementation (TDD) |
 | checker | Sonnet | --dangerously-skip-permissions | Code review |
-| writer | Sonnet | --dangerously-skip-permissions | Documentation |
+| writer | Sonnet | --dangerously-skip-permissions | Documentation (ADR, specs, README) *条件付き |
 
 ## Requirements
 
