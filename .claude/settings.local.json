@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash -n /Users/tanabe.nobuyuki/Documents/repositories/harnecess/harnecess)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/agent_status.sh)",
+      "Bash(tmux list-sessions:*)",
+      "Bash(tmux list-panes:*)",
+      "Bash(tmux capture-pane:*)",
+      "Bash(tmux send-keys:*)",
+      "Bash(brew install:*)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh checker \"タスクYAMLを読んでレビュー開始せよ。Builder の PR #1464 レビュー指摘反映をコードレビュー。\" task_assigned lead)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh builder \"Checker request_changes。タスクYAML読んで修正開始せよ。H001: CreateUserForAdminApiController例外漏れ、M001: ArrayList完全修飾名、M002: 未使用import。\" task_assigned lead)",
+      "Bash(tmux new-window:*)",
+      "Bash(tmux split-window:*)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh builder \"タスクYAML読んでコミット&プッシュを実行せよ。checker approve済み。\" task_assigned lead)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh builder \"タスクYAML読んで静的解析・テスト実行を開始せよ。spotlessCheck、PMD、単体テスト、統合テストを実行して結果を報告。\" task_assigned lead)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh builder \"CIのcheckstyle失敗。タスクYAML読んでUserCreator.java:218の行長修正→コミット&プッシュせよ。\" task_assigned lead)",
+      "Bash(tmux has-session:*)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh planner \"タスクYAMLを読んで計画を策定せよ。PR #1464 レビュー指摘2件への対応計画。\" task_assigned lead)",
+      "Bash(tmux display-message:*)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh lead \"planner、計画策定完了・承認済み。計画ファイル: ~/.claude/plans/rosy-soaring-shell.md を確認されたし。指摘1: UserSocialCreator.validateNoDuplicates\\(\\) でリスト内socialProviderCode重複チェック追加（DuplicateSocialConnectionInListException → 400 BAD_REQUEST）。変更4ファイル+テスト1ファイル。指摘2: google+lineの複数SocialConnection同時登録テスト+重複時エラーテスト追加。TDD順序で実施。\" report_received planner)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh builder \"タスクYAMLを読んで作業開始せよ。PR #1464 レビュー指摘2件の実装。計画: ~/.claude/plans/rosy-soaring-shell.md\" task_assigned lead)",
+      "Bash(bash /Users/tanabe.nobuyuki/Documents/repositories/harnecess/scripts/inbox_write.sh checker \"レビュー開始せよ。Builder の PR #1464 レビュー指摘対応（重複バリデーション＋統合テスト）をレビューせよ。\" task_assigned lead)"
+    ]
+  }
+}

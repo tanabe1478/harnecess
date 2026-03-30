@@ -1,0 +1,17 @@
+# Runtime state
+.harnecess/
+queue/
+logs/
+*.log
+dashboard.md
+
+# Reference repos
+.reference/
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/

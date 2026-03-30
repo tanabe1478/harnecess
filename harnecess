@@ -1,0 +1,625 @@
+#!/usr/bin/env bash
+# =============================================================================
+# harnecess — Multi-Agent Orchestration Launcher
+# =============================================================================
+#
+# Usage:
+#   harnecess start [target-repo-path]   Launch all agents
+#   harnecess stop                       Kill all sessions
+#   harnecess status                     Show agent status
+#   harnecess -h | --help                Show help
+#
+# Agents:
+#   lead     — orchestrator (session: harnecess)
+#   planner  — planning agent, Plan Mode (session: harnecess-agents, pane 0)
+#   builder  — implementation agent (session: harnecess-agents, pane 1)
+#   checker  — review/verification agent (session: harnecess-agents, pane 2)
+#   writer   — documentation/output agent (session: harnecess-agents, pane 3)
+
+set -e
+
+# =============================================================================
+# Resolve HARNECESS_ROOT via symlink resolution
+# =============================================================================
+_resolve_symlinks() {
+    local path="$1"
+    while [ -L "$path" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$path")" && pwd)"
+        path="$(readlink "$path")"
+        [[ "$path" != /* ]] && path="$dir/$path"
+    done
+    echo "$(cd -P "$(dirname "$path")" && pwd)"
+}
+
+HARNECESS_ROOT="$(_resolve_symlinks "${BASH_SOURCE[0]}")"
+
+# Agent definitions
+AGENTS=("lead" "planner" "builder" "checker" "writer")
+AGENT_PANE_AGENTS=("planner" "builder" "checker" "writer")
+
+SESSION_LEAD="harnecess"
+SESSION_AGENTS="harnecess-agents"
+
+# =============================================================================
+# Color helpers
+# =============================================================================
+_c_reset="\033[0m"
+_c_bold="\033[1m"
+_c_red="\033[1;31m"
+_c_green="\033[1;32m"
+_c_yellow="\033[1;33m"
+_c_blue="\033[1;34m"
+_c_magenta="\033[1;35m"
+_c_cyan="\033[1;36m"
+_c_white="\033[1;37m"
+
+log_info()    { echo -e "${_c_yellow}[info]${_c_reset} $1"; }
+log_success() { echo -e "${_c_green}[done]${_c_reset} $1"; }
+log_action()  { echo -e "${_c_cyan}[>>]${_c_reset} $1"; }
+log_error()   { echo -e "${_c_red}[error]${_c_reset} $1"; }
+
+# =============================================================================
+# Generate UUID (portable: macOS + Linux)
+# =============================================================================
+generate_uuid() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [ -f /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid
+    else
+        # Fallback: pseudo-UUID from /dev/urandom
+        od -x /dev/urandom | head -1 | awk '{OFS="-"; print $2$3,$4,$5,$6,$7$8$9}'
+    fi
+}
+
+# =============================================================================
+# Banner
+# =============================================================================
+show_banner() {
+    clear
+    echo ""
+    echo -e "${_c_cyan}+==============================================================================+${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset} ${_c_white}██╗  ██╗ █████╗ ██████╗ ███╗   ██╗███████╗ ██████╗███████╗███████╗${_c_reset}        ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset} ${_c_white}██║  ██║██╔══██╗██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝██╔════╝${_c_reset}        ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset} ${_c_white}███████║███████║██████╔╝██╔██╗ ██║█████╗  ██║     █████╗  ███████╗${_c_reset}        ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset} ${_c_white}██╔══██║██╔══██║██╔══██╗██║╚██╗██║██╔══╝  ██║     ██╔══╝  ╚════██║${_c_reset}        ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset} ${_c_white}██║  ██║██║  ██║██║  ██║██║ ╚████║███████╗╚██████╗███████╗███████║${_c_reset}        ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset} ${_c_white}╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝╚══════╝╚══════╝${_c_reset}        ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}+==============================================================================+${_c_reset}"
+    echo -e "${_c_cyan}|${_c_reset}       ${_c_white}Multi-Agent Orchestration System${_c_reset}                                    ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}+==============================================================================+${_c_reset}"
+    echo ""
+
+    # =========================================================================
+    # Agent formation display
+    # =========================================================================
+    echo -e "${_c_blue}  +=========================================================================+${_c_reset}"
+    echo -e "${_c_blue}  |${_c_reset}              ${_c_white}[ Agent Formation : Lead + 4 Specialists ]${_c_reset}               ${_c_blue}|${_c_reset}"
+    echo -e "${_c_blue}  +=========================================================================+${_c_reset}"
+
+    cat << 'FORMATION_EOF'
+
+                              .     .
+                             /|\ _ /|\
+                            / |/   \| \
+                               [ LEAD ]
+                                  |
+                               [ PLAN ]
+                              /    |    \
+                             /     |     \
+                         .  /      |      \  .
+                        /|\       /|\       /|\
+                       / | \     / | \     / | \
+                     [BUILD]  [CHECK]  [WRITE]
+
+FORMATION_EOF
+
+    echo -e "                    ${_c_cyan}[ All agents standing by. Deploying... ]${_c_reset}"
+    echo ""
+}
+
+
+# =============================================================================
+# Subcommand: stop
+# =============================================================================
+cmd_stop() {
+    log_action "Stopping harnecess sessions..."
+
+    # Kill inbox watchers
+    pkill -f "inbox_watcher.sh" 2>/dev/null || true
+    pkill -f "inotifywait.*queue/inbox" 2>/dev/null || true
+    pkill -f "fswatch.*queue/inbox" 2>/dev/null || true
+
+    tmux kill-session -t "$SESSION_AGENTS" 2>/dev/null && log_info "  Killed session: $SESSION_AGENTS" || log_info "  Session $SESSION_AGENTS not found"
+    tmux kill-session -t "$SESSION_LEAD" 2>/dev/null && log_info "  Killed session: $SESSION_LEAD" || log_info "  Session $SESSION_LEAD not found"
+
+    log_success "All harnecess sessions stopped."
+}
+
+# =============================================================================
+# Subcommand: status
+# =============================================================================
+cmd_status() {
+    echo ""
+    echo -e "${_c_cyan}  +===========================================================+${_c_reset}"
+    echo -e "${_c_cyan}  |${_c_reset}  ${_c_white}Harnecess Agent Status${_c_reset}                                    ${_c_cyan}|${_c_reset}"
+    echo -e "${_c_cyan}  +===========================================================+${_c_reset}"
+    echo ""
+
+    # Check sessions
+    local lead_alive=false
+    local agents_alive=false
+
+    if tmux has-session -t "$SESSION_LEAD" 2>/dev/null; then
+        lead_alive=true
+    fi
+    if tmux has-session -t "$SESSION_AGENTS" 2>/dev/null; then
+        agents_alive=true
+    fi
+
+    # Lead
+    if $lead_alive; then
+        local lead_task
+        lead_task=$(tmux show-options -p -t "${SESSION_LEAD}:main" -v @current_task 2>/dev/null || echo "")
+        local lead_model
+        lead_model=$(tmux show-options -p -t "${SESSION_LEAD}:main" -v @model_name 2>/dev/null || echo "?")
+        echo -e "  ${_c_magenta}lead${_c_reset}     [RUNNING]  model=${lead_model}  task=${lead_task:-idle}"
+    else
+        echo -e "  ${_c_magenta}lead${_c_reset}     [STOPPED]"
+    fi
+
+    # Pane base index
+    local pane_base
+    pane_base=$(tmux show-options -gv pane-base-index 2>/dev/null || echo 0)
+
+    if $agents_alive; then
+        for i in "${!AGENT_PANE_AGENTS[@]}"; do
+            local agent="${AGENT_PANE_AGENTS[$i]}"
+            local p=$((pane_base + i))
+            local agent_task
+            agent_task=$(tmux show-options -p -t "${SESSION_AGENTS}:agents.${p}" -v @current_task 2>/dev/null || echo "")
+            local agent_model
+            agent_model=$(tmux show-options -p -t "${SESSION_AGENTS}:agents.${p}" -v @model_name 2>/dev/null || echo "?")
+            local color="${_c_blue}"
+            [[ "$agent" == "checker" ]] && color="${_c_yellow}"
+            [[ "$agent" == "writer" ]] && color="${_c_green}"
+            echo -e "  ${color}${agent}${_c_reset}  [RUNNING]  model=${agent_model}  task=${agent_task:-idle}"
+        done
+    else
+        for agent in "${AGENT_PANE_AGENTS[@]}"; do
+            echo -e "  ${_c_blue}${agent}${_c_reset}  [STOPPED]"
+        done
+    fi
+
+    echo ""
+
+    # Tmux sessions
+    echo -e "  ${_c_yellow}Tmux Sessions:${_c_reset}"
+    if tmux list-sessions 2>/dev/null | grep -q "harnecess"; then
+        tmux list-sessions 2>/dev/null | grep "harnecess" | sed 's/^/     /'
+    else
+        echo "     (no harnecess sessions)"
+    fi
+
+    # Inbox watchers
+    echo ""
+    local watcher_count
+    watcher_count=$(pgrep -f "inbox_watcher.sh" 2>/dev/null | wc -l | tr -d ' ')
+    echo -e "  ${_c_yellow}Inbox Watchers:${_c_reset} ${watcher_count} running"
+
+    echo ""
+}
+
+# =============================================================================
+# Subcommand: start [target-repo-path]
+# =============================================================================
+cmd_start() {
+    local target_repo="$1"
+
+    # Validate target repo if provided
+    if [ -n "$target_repo" ]; then
+        # Resolve to absolute path
+        if [[ "$target_repo" != /* ]]; then
+            target_repo="$(cd "$target_repo" 2>/dev/null && pwd)" || {
+                log_error "Target repository path does not exist: $1"
+                exit 1
+            }
+        fi
+        if [ ! -d "$target_repo" ]; then
+            log_error "Target repository path does not exist: $target_repo"
+            exit 1
+        fi
+    fi
+
+    # Verify tmux is available
+    if ! command -v tmux &>/dev/null; then
+        log_error "tmux is not installed. Please install tmux first."
+        exit 1
+    fi
+
+    # Verify claude is available
+    if ! command -v claude &>/dev/null; then
+        log_error "claude command not found. Install Claude Code first."
+        exit 1
+    fi
+
+    # Verify fswatch is available (required for inbox_watcher on macOS)
+    if [[ "$(uname -s)" == "Darwin" ]] && ! command -v fswatch &>/dev/null; then
+        log_error "fswatch is not installed. Install: brew install fswatch"
+        exit 1
+    fi
+
+    # Verify gh is available
+    if ! command -v gh &>/dev/null; then
+        log_error "gh (GitHub CLI) is not installed. Install: brew install gh"
+        exit 1
+    fi
+
+    # Show banner
+    show_banner
+
+    # =========================================================================
+    # STEP 1: Kill existing sessions
+    # =========================================================================
+    log_action "Cleaning up existing sessions..."
+    pkill -f "inbox_watcher.sh" 2>/dev/null || true
+    pkill -f "inotifywait.*queue/inbox" 2>/dev/null || true
+    pkill -f "fswatch.*queue/inbox" 2>/dev/null || true
+    tmux kill-session -t "$SESSION_AGENTS" 2>/dev/null && log_info "  Killed: $SESSION_AGENTS" || true
+    tmux kill-session -t "$SESSION_LEAD" 2>/dev/null && log_info "  Killed: $SESSION_LEAD" || true
+
+    # Clear stale idle flags from previous sessions
+    rm -f /tmp/harnecess_idle_* 2>/dev/null
+    rm -f /tmp/harnecess_idle_* 2>/dev/null
+    for agent in "${AGENTS[@]}"; do
+        rm -f "/tmp/harnecess_idle_${agent}" 2>/dev/null
+    done
+    log_info "  Cleared stale idle flags"
+
+    # Remove stale lock files
+    rm -rf "$HARNECESS_ROOT"/queue/inbox/*.lock.d 2>/dev/null
+    log_info "  Cleared stale lock files"
+    echo ""
+
+    # =========================================================================
+    # STEP 2: Ensure directory structure
+    # =========================================================================
+    log_action "Preparing workspace..."
+    mkdir -p "$HARNECESS_ROOT/queue/inbox"
+    mkdir -p "$HARNECESS_ROOT/queue/reports"
+    mkdir -p "$HARNECESS_ROOT/queue/tasks"
+    mkdir -p "$HARNECESS_ROOT/logs"
+
+    # Ensure inbox files exist for all agents
+    for agent in "${AGENTS[@]}"; do
+        [ -f "$HARNECESS_ROOT/queue/inbox/${agent}.yaml" ] || echo "messages:" > "$HARNECESS_ROOT/queue/inbox/${agent}.yaml"
+    done
+    # Python venv preflight
+    # inbox_write.sh, inbox_watcher.sh depend on .venv/bin/python3 with pyyaml
+    local VENV_DIR="$HARNECESS_ROOT/.venv"
+    if [ ! -f "$VENV_DIR/bin/python3" ] || ! "$VENV_DIR/bin/python3" -c "import yaml" 2>/dev/null; then
+        log_info "  Setting up Python venv..."
+        if command -v python3 &>/dev/null; then
+            python3 -m venv "$VENV_DIR" 2>/dev/null || {
+                log_error "python3 -m venv failed. You may need python3-venv package."
+                exit 1
+            }
+            "$VENV_DIR/bin/pip" install -r "$HARNECESS_ROOT/requirements.txt" -q 2>/dev/null || {
+                log_error "pip install failed."
+                exit 1
+            }
+            log_success "  Python venv ready"
+        else
+            log_error "python3 not found."
+            exit 1
+        fi
+    fi
+
+    # Initialize dashboard.md (central status board, lead reads this)
+    cat > "$HARNECESS_ROOT/dashboard.md" << 'DASHBOARD'
+# Harnecess Dashboard
+
+## Status
+
+| Agent | Status | Task |
+|-------|--------|------|
+| lead | ready | - |
+| planner | standby | - |
+| builder | standby | - |
+| checker | standby | - |
+| writer | standby | - |
+
+## In Progress
+
+(none)
+
+## Completed
+
+(none)
+
+## Action Required
+
+(none)
+DASHBOARD
+    log_info "  Dashboard initialized"
+
+    log_success "  Workspace ready"
+    echo ""
+
+    # =========================================================================
+    # STEP 3: Get pane-base-index
+    # =========================================================================
+    local PANE_BASE
+    PANE_BASE=$(tmux show-options -gv pane-base-index 2>/dev/null || echo 0)
+
+    # =========================================================================
+    # STEP 4: Create lead session (1 pane)
+    # =========================================================================
+    log_action "Creating lead session..."
+
+    if ! tmux new-session -d -s "$SESSION_LEAD" -n main; then
+        log_error "Failed to create tmux session '$SESSION_LEAD'"
+        exit 1
+    fi
+
+    # Global tmux settings for multi-client support
+    tmux set-option -g window-size latest
+    tmux set-option -g aggressive-resize on
+
+    # Configure lead pane
+    tmux send-keys -t "${SESSION_LEAD}:main" "cd \"${HARNECESS_ROOT}\" && clear" Enter
+    tmux select-pane -t "${SESSION_LEAD}:main" -P 'bg=#002b36'
+    tmux set-option -p -t "${SESSION_LEAD}:main" @agent_id "lead"
+    tmux set-option -p -t "${SESSION_LEAD}:main" @model_name "Opus"
+    tmux set-option -p -t "${SESSION_LEAD}:main" @current_task ""
+
+    # pane-border-format for lead session
+    tmux set-option -t "$SESSION_LEAD" -w pane-border-status top
+    tmux set-option -t "$SESSION_LEAD" -w pane-border-format \
+        '#{?pane_active,#[reverse],}#[bold]#{@agent_id}#[default] (#{@model_name}) #{@current_task}'
+
+    log_success "  Lead session created"
+    echo ""
+
+    # =========================================================================
+    # STEP 5: Create agents session (4 panes — planner + builder + checker + writer)
+    # =========================================================================
+    log_action "Creating agents session (4 panes)..."
+
+    if ! tmux new-session -d -s "$SESSION_AGENTS" -n "agents"; then
+        log_error "Failed to create tmux session '$SESSION_AGENTS'"
+        exit 1
+    fi
+
+    # Split into 2x2 grid: planner | builder / checker | writer
+    tmux split-window -h -t "${SESSION_AGENTS}:agents"
+    tmux split-window -v -t "${SESSION_AGENTS}:agents.${PANE_BASE}"
+    tmux split-window -v -t "${SESSION_AGENTS}:agents.$((PANE_BASE + 2))"
+
+    # Agent colors for pane labels
+    local agent_models=("Opus" "Opus" "Sonnet" "Sonnet")  # planner, builder, checker, writer
+
+    for i in "${!AGENT_PANE_AGENTS[@]}"; do
+        local agent="${AGENT_PANE_AGENTS[$i]}"
+        local p=$((PANE_BASE + i))
+        local model_display="${agent_models[$i]}"
+
+        tmux send-keys -t "${SESSION_AGENTS}:agents.${p}" "cd \"${HARNECESS_ROOT}\" && clear" Enter
+        tmux set-option -p -t "${SESSION_AGENTS}:agents.${p}" @agent_id "$agent"
+        tmux set-option -p -t "${SESSION_AGENTS}:agents.${p}" @model_name "$model_display"
+        tmux set-option -p -t "${SESSION_AGENTS}:agents.${p}" @current_task ""
+    done
+
+    # pane-border-format for agents session
+    tmux set-option -t "$SESSION_AGENTS" -w pane-border-status top
+    tmux set-option -t "$SESSION_AGENTS" -w pane-border-format \
+        '#{?pane_active,#[reverse],}#[bold]#{@agent_id}#[default] (#{@model_name}) #{@current_task}'
+
+    log_success "  Agents session created (planner | builder | checker | writer)"
+    echo ""
+
+    # =========================================================================
+    # STEP 6: Launch Claude Code on all agents
+    # =========================================================================
+    log_action "Launching Claude Code on all agents..."
+
+    # Build the startup prompt for each agent
+    local lead_startup='MANDATORY FIRST ACTION: You MUST execute these steps before doing ANYTHING else. Step 1: Run tmux display-message -t \"\$TMUX_PANE\" -p \"#{@agent_id}\" to identify yourself. Step 2: Read instructions/lead.md completely. Step 3: Read queue/inbox/lead.yaml. Step 4: Report ready and wait for user instructions. When the user gives you a task, invoke /harnecess skill to execute the pipeline. NEVER implement code yourself.'
+    local agent_startup='MANDATORY FIRST ACTION: You MUST execute these steps before doing ANYTHING else. Step 1: Run tmux display-message -t \"\$TMUX_PANE\" -p \"#{@agent_id}\" to identify yourself. Step 2: Read instructions/{agent_id}.md completely. Step 3: Read queue/inbox/{agent_id}.yaml. Step 4: Report ready and wait for task assignment via inbox.'
+
+    # Build --add-dir flag if target repo is specified
+    local add_dir_flag=""
+    if [ -n "$target_repo" ]; then
+        add_dir_flag=" --add-dir \"${target_repo}\""
+    fi
+
+    # --- Lead ---
+    local lead_session_id
+    lead_session_id=$(generate_uuid)
+    local lead_prompt="${lead_startup}"
+    local lead_cmd="claude --model opus --effort max --permission-mode default --disallowedTools 'Edit,NotebookEdit,Agent' --session-id ${lead_session_id}${add_dir_flag} \"${lead_prompt}\""
+    tmux send-keys -t "${SESSION_LEAD}:main" "$lead_cmd" Enter
+    log_info "  lead (Opus) launched  session-id=${lead_session_id}"
+
+    sleep 1
+
+    # --- Planner (pane 0) — Plan Mode for interactive planning ---
+    local planner_session_id
+    planner_session_id=$(generate_uuid)
+    local planner_prompt="${agent_startup//\{agent_id\}/planner}"
+    local planner_cmd="claude --model opus --effort max --permission-mode plan --session-id ${planner_session_id}${add_dir_flag} \"${planner_prompt}\""
+    local p=$((PANE_BASE + 0))
+    tmux send-keys -t "${SESSION_AGENTS}:agents.${p}" "$planner_cmd" Enter
+    log_info "  planner (Opus, Plan Mode) launched  session-id=${planner_session_id}"
+
+    # --- Builder (pane 1) ---
+    local builder_session_id
+    builder_session_id=$(generate_uuid)
+    local builder_prompt="${agent_startup//\{agent_id\}/builder}"
+    local builder_cmd="claude --model opus --effort max --dangerously-skip-permissions --session-id ${builder_session_id}${add_dir_flag} \"${builder_prompt}\""
+    p=$((PANE_BASE + 1))
+    tmux send-keys -t "${SESSION_AGENTS}:agents.${p}" "$builder_cmd" Enter
+    log_info "  builder (Opus) launched  session-id=${builder_session_id}"
+
+    # --- Checker (pane 2) ---
+    local checker_session_id
+    checker_session_id=$(generate_uuid)
+    local checker_prompt="${agent_startup//\{agent_id\}/checker}"
+    local checker_cmd="claude --model sonnet --effort max --dangerously-skip-permissions --session-id ${checker_session_id}${add_dir_flag} \"${checker_prompt}\""
+    p=$((PANE_BASE + 2))
+    tmux send-keys -t "${SESSION_AGENTS}:agents.${p}" "$checker_cmd" Enter
+    log_info "  checker (Sonnet) launched  session-id=${checker_session_id}"
+
+    # --- Writer (pane 3) ---
+    local writer_session_id
+    writer_session_id=$(generate_uuid)
+    local writer_prompt="${agent_startup//\{agent_id\}/writer}"
+    local writer_cmd="claude --model sonnet --effort max --dangerously-skip-permissions --session-id ${writer_session_id}${add_dir_flag} \"${writer_prompt}\""
+    p=$((PANE_BASE + 3))
+    tmux send-keys -t "${SESSION_AGENTS}:agents.${p}" "$writer_cmd" Enter
+    log_info "  writer (Sonnet) launched  session-id=${writer_session_id}"
+
+    echo ""
+
+    # =========================================================================
+    # STEP 7: Wait for lead to start
+    # =========================================================================
+    echo "  Waiting for lead agent to initialize (up to 30s)..."
+    for i in {1..30}; do
+        if tmux capture-pane -t "${SESSION_LEAD}:main" -p 2>/dev/null | grep -q "bypass permissions"; then
+            echo "  Lead agent ready (${i}s)"
+            break
+        fi
+        sleep 1
+    done
+    echo ""
+
+    # =========================================================================
+    # STEP 8: Start inbox watchers for all agents
+    # =========================================================================
+    log_action "Starting inbox watchers..."
+
+    # Lead watcher (safe mode: no escalation)
+    nohup env ASW_DISABLE_ESCALATION=1 ASW_PROCESS_TIMEOUT=0 ASW_DISABLE_NORMAL_NUDGE=0 \
+        bash "$HARNECESS_ROOT/scripts/inbox_watcher.sh" lead "${SESSION_LEAD}:main" "claude" \
+        >> "$HARNECESS_ROOT/logs/inbox_watcher_lead.log" 2>&1 &
+    disown
+
+    # Agent watchers
+    for i in "${!AGENT_PANE_AGENTS[@]}"; do
+        local agent="${AGENT_PANE_AGENTS[$i]}"
+        local p=$((PANE_BASE + i))
+        nohup bash "$HARNECESS_ROOT/scripts/inbox_watcher.sh" "$agent" "${SESSION_AGENTS}:agents.${p}" "claude" \
+            >> "$HARNECESS_ROOT/logs/inbox_watcher_${agent}.log" 2>&1 &
+        disown
+    done
+
+    log_success "  ${#AGENTS[@]} inbox watchers started (lead + planner + builder + checker + writer)"
+    echo ""
+
+    # =========================================================================
+    # STEP 9: Summary
+    # =========================================================================
+    echo -e "  ${_c_yellow}Formation:${_c_reset}"
+    echo ""
+    echo "     [harnecess session] Lead"
+    echo "     +-----------------------------+"
+    echo "     |  Pane 0: lead (Opus)        |  Orchestrator"
+    echo "     +-----------------------------+"
+    echo ""
+    echo "     [harnecess-agents session] Specialists (2x2 grid)"
+    echo "     +-----------+-----------+"
+    echo "     |  planner  |  builder  |"
+    echo "     |  (Opus)   |  (Opus)   |"
+    echo "     +-----------+-----------+"
+    echo "     |  checker  |  writer   |"
+    echo "     |  (Sonnet) |  (Sonnet) |"
+    echo "     +-----------+-----------+"
+    echo ""
+
+    if [ -n "$target_repo" ]; then
+        echo -e "  ${_c_yellow}Target repo:${_c_reset} $target_repo"
+        echo ""
+    fi
+
+    echo -e "  ${_c_cyan}+===========================================================+${_c_reset}"
+    echo -e "  ${_c_cyan}|${_c_reset}  ${_c_white}All agents deployed and ready.${_c_reset}                            ${_c_cyan}|${_c_reset}"
+    echo -e "  ${_c_cyan}+===========================================================+${_c_reset}"
+    echo ""
+    echo "  Next steps:"
+    echo "  +------------------------------------------------------------+"
+    echo "  |  Attach to lead:                                           |"
+    echo "  |    tmux attach-session -t harnecess         (alias: css)   |"
+    echo "  |                                                            |"
+    echo "  |  Attach to agents:                                         |"
+    echo "  |    tmux attach-session -t harnecess-agents  (alias: csm)   |"
+    echo "  +------------------------------------------------------------+"
+    echo ""
+    echo "  Shell aliases (add to .zshrc / .bashrc):"
+    echo "    alias css='tmux attach-session -t harnecess'"
+    echo "    alias csm='tmux attach-session -t harnecess-agents'"
+    echo ""
+}
+
+# =============================================================================
+# Help
+# =============================================================================
+show_help() {
+    echo ""
+    echo "  harnecess — Multi-Agent Orchestration Launcher"
+    echo ""
+    echo "  Usage:"
+    echo "    harnecess start [target-repo-path]   Launch all agents"
+    echo "    harnecess stop                       Kill all sessions"
+    echo "    harnecess status                     Show agent status"
+    echo "    harnecess -h | --help                Show this help"
+    echo ""
+    echo "  Agents:"
+    echo "    lead     Opus    Orchestrator (session: harnecess)"
+    echo "    planner  Opus    Planning/Plan Mode (session: harnecess-agents, pane 0)"
+    echo "    builder  Opus    Implementation (session: harnecess-agents, pane 1)"
+    echo "    checker  Sonnet  Review/verification (session: harnecess-agents, pane 2)"
+    echo "    writer   Sonnet  Documentation/output (session: harnecess-agents, pane 3)"
+    echo ""
+    echo "  Features:"
+    echo "    - Fresh UUID session-id per agent (no stale session resume)"
+    echo "    - --dangerously-skip-permissions for all agents"
+    echo "    - tmux pane-border-format showing agent_id, model, task"
+    echo "    - inbox_watcher spawned for each agent"
+    echo "    - Working directory = harnecess repo (CLAUDE.md auto-loaded)"
+    echo "    - --add-dir for target repository access"
+    echo ""
+    echo "  Shell aliases:"
+    echo "    alias css='tmux attach-session -t harnecess'"
+    echo "    alias csm='tmux attach-session -t harnecess-agents'"
+    echo ""
+}
+
+# =============================================================================
+# Main dispatch
+# =============================================================================
+case "${1:-}" in
+    start)
+        shift
+        cmd_start "$@"
+        ;;
+    stop)
+        cmd_stop
+        ;;
+    status)
+        cmd_status
+        ;;
+    -h|--help|help)
+        show_help
+        ;;
+    "")
+        show_help
+        exit 1
+        ;;
+    *)
+        log_error "Unknown subcommand: $1"
+        echo "  Run 'harnecess --help' for usage."
+        exit 1
+        ;;
+esac
