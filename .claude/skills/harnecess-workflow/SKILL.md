@@ -41,9 +41,10 @@ If user declines or conditions not met → Proceed to Step 1
 
 ### Step 1: Delegate to Planner
 
-```bash
-# 1. Write the task YAML
-cat > queue/tasks/planner.yaml << 'EOF'
+Write the task YAML. **That's it.** State watcher will automatically notify planner.
+
+```yaml
+# Write to queue/tasks/planner.yaml
 task:
   task_id: plan_001
   description: |
@@ -51,18 +52,13 @@ task:
     Task: <USER'S REQUEST HERE>
   status: assigned
   timestamp: "<RUN date '+%Y-%m-%dT%H:%M:%S'>"
-EOF
-
-# 2. Send inbox message
-bash scripts/inbox_write.sh planner "タスクYAMLを読んで計画を策定せよ。" task_assigned lead
-
-# 3. Nudge planner (in case watcher is slow)
-tmux send-keys -t harnecess-agents:agents.0 'inbox1' Enter
 ```
+
+**Do NOT call inbox_write or tmux send-keys.** State watcher handles notification automatically.
 
 **STOP. Tell the user: "Planner に委任しました。csm で planner ペインを確認できます。完了報告を待ちます。"**
 
-Wait for planner's report in queue/inbox/lead.yaml.
+Wait for state watcher to notify you when planner's report is ready.
 
 ### Step 2: Confirm Plan Completion
 
@@ -76,9 +72,10 @@ NOTE: The user interacts with planner directly in the csm session via Plan Mode'
 
 ### Step 3: Delegate to Builder
 
-```bash
-# 1. Write task YAML based on plan.yaml
-cat > queue/tasks/builder.yaml << 'EOF'
+Write the task YAML. **That's it.** State watcher will automatically notify builder.
+
+```yaml
+# Write to queue/tasks/builder.yaml
 task:
   task_id: build_001
   description: |
@@ -87,22 +84,18 @@ task:
     - <FROM PLAN.YAML>
   status: assigned
   timestamp: "<RUN date '+%Y-%m-%dT%H:%M:%S'>"
-EOF
-
-# 2. Send inbox
-bash scripts/inbox_write.sh builder "タスクYAMLを読んで作業開始せよ。" task_assigned lead
-
-# 3. Nudge
-tmux send-keys -t harnecess-agents:agents.1 'inbox1' Enter
 ```
+
+**Do NOT call inbox_write or tmux send-keys.** State watcher handles notification automatically.
 
 **STOP. Tell the user: "Builder に委任しました。csm で builder ペインを確認できます。"**
 
 ### Step 4: Delegate to Checker
 
-When builder reports:
-```bash
-cat > queue/tasks/checker.yaml << 'EOF'
+When builder reports (state watcher notifies you automatically):
+
+```yaml
+# Write to queue/tasks/checker.yaml
 task:
   task_id: review_001
   type: code_review
@@ -110,10 +103,6 @@ task:
     Review builder's implementation.
   status: assigned
   timestamp: "<RUN date '+%Y-%m-%dT%H:%M:%S'>"
-EOF
-
-bash scripts/inbox_write.sh checker "レビュー開始せよ。" task_assigned lead
-tmux send-keys -t harnecess-agents:agents.2 'inbox1' Enter
 ```
 
 **STOP. Wait for checker's report.**
@@ -126,14 +115,13 @@ tmux send-keys -t harnecess-agents:agents.2 'inbox1' Enter
 ### Step 6: Create PR
 
 ```bash
-# In the target repo directory
 gh pr create --title "<title>" --body "<body>"
 ```
 
 ### Step 7: Delegate to Writer
 
-```bash
-cat > queue/tasks/writer.yaml << 'EOF'
+```yaml
+# Write to queue/tasks/writer.yaml
 task:
   task_id: docs_001
   type: documentation
@@ -144,10 +132,6 @@ task:
     specs_affected: <from plan.yaml>
   status: assigned
   timestamp: "<RUN date '+%Y-%m-%dT%H:%M:%S'>"
-EOF
-
-bash scripts/inbox_write.sh writer "ドキュメント更新せよ。" task_assigned lead
-tmux send-keys -t harnecess-agents:agents.3 'inbox1' Enter
 ```
 
 ### Step 8: Report to User

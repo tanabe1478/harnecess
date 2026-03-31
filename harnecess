@@ -129,10 +129,11 @@ cmd_stop() {
     # Save session logs before killing
     save_session_logs
 
-    # Kill inbox watchers
+    # Kill watchers
     pkill -f "inbox_watcher.sh" 2>/dev/null || true
-    pkill -f "inotifywait.*queue/inbox" 2>/dev/null || true
-    pkill -f "fswatch.*queue/inbox" 2>/dev/null || true
+    pkill -f "state_watcher.sh" 2>/dev/null || true
+    pkill -f "inotifywait.*queue" 2>/dev/null || true
+    pkill -f "fswatch.*queue" 2>/dev/null || true
 
     tmux kill-session -t "$SESSION_AGENTS" 2>/dev/null && log_info "  Killed session: $SESSION_AGENTS" || log_info "  Session $SESSION_AGENTS not found"
     tmux kill-session -t "$SESSION_LEAD" 2>/dev/null && log_info "  Killed session: $SESSION_LEAD" || log_info "  Session $SESSION_LEAD not found"
@@ -419,8 +420,9 @@ cmd_start() {
     # =========================================================================
     log_action "Cleaning up existing sessions..."
     pkill -f "inbox_watcher.sh" 2>/dev/null || true
-    pkill -f "inotifywait.*queue/inbox" 2>/dev/null || true
-    pkill -f "fswatch.*queue/inbox" 2>/dev/null || true
+    pkill -f "state_watcher.sh" 2>/dev/null || true
+    pkill -f "inotifywait.*queue" 2>/dev/null || true
+    pkill -f "fswatch.*queue" 2>/dev/null || true
     tmux kill-session -t "$SESSION_AGENTS" 2>/dev/null && log_info "  Killed: $SESSION_AGENTS" || true
     tmux kill-session -t "$SESSION_LEAD" 2>/dev/null && log_info "  Killed: $SESSION_LEAD" || true
 
@@ -680,6 +682,12 @@ DASHBOARD
     done
 
     log_success "  ${#AGENTS[@]} inbox watchers started (lead + planner + builder + checker + writer)"
+
+    # Start state watcher (auto-notification on task/report changes)
+    nohup bash "$HARNECESS_ROOT/scripts/state_watcher.sh" \
+        >> "$HARNECESS_ROOT/logs/state_watcher.log" 2>&1 &
+    disown
+    log_success "  State watcher started (auto-notify on task/report changes)"
     echo ""
 
     # =========================================================================
