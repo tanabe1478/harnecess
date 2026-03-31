@@ -142,48 +142,127 @@ cmd_stop() {
 
 # =============================================================================
 # Save session logs (called before stop)
+# Format: JSONL (inspired by entireio/cli logging)
+# Queryable with: jq 'select(.agent == "builder")' logs/sessions/<id>/session.jsonl
 # =============================================================================
 save_session_logs() {
-    local timestamp
-    timestamp="$(date +%Y%m%d_%H%M%S)"
-    local log_dir="${HARNECESS_ROOT}/logs/sessions/${timestamp}"
+    local session_id
+    session_id="$(date +%Y-%m-%d)-$(python3 -c 'import uuid; print(str(uuid.uuid4())[:8])')"
+    local log_dir="${HARNECESS_ROOT}/logs/sessions/${session_id}"
     mkdir -p "${log_dir}"
+
+    local session_jsonl="${log_dir}/session.jsonl"
+    local iso_time
+    iso_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     local pane_base
     pane_base=$(tmux show-options -gv pane-base-index 2>/dev/null || echo 0)
 
-    # Save lead pane log
+    # Session start entry
+    python3 -c "
+import json
+entry = {
+    'type': 'session.stop',
+    'time': '${iso_time}',
+    'session_id': '${session_id}',
+    'agents': ['lead', 'planner', 'builder', 'checker', 'writer']
+}
+print(json.dumps(entry))
+" >> "${session_jsonl}"
+
+    # Save lead pane transcript
     if tmux has-session -t "$SESSION_LEAD" 2>/dev/null; then
-        tmux capture-pane -t "${SESSION_LEAD}:main" -p -S - > "${log_dir}/lead.log" 2>/dev/null || true
-        log_info "  Saved lead log"
+        local lead_transcript
+        lead_transcript="$(tmux capture-pane -t "${SESSION_LEAD}:main" -p -S - 2>/dev/null || echo "")"
+        if [ -n "$lead_transcript" ]; then
+            echo "$lead_transcript" > "${log_dir}/lead.transcript.txt"
+            python3 -c "
+import json
+entry = {
+    'type': 'agent.transcript',
+    'time': '${iso_time}',
+    'session_id': '${session_id}',
+    'agent': 'lead',
+    'model': 'opus',
+    'transcript_file': 'lead.transcript.txt',
+    'line_count': len(open('${log_dir}/lead.transcript.txt').readlines())
+}
+print(json.dumps(entry))
+" >> "${session_jsonl}"
+        fi
+        log_info "  Saved lead transcript"
     fi
 
-    # Save agent pane logs
+    # Save agent pane transcripts
     if tmux has-session -t "$SESSION_AGENTS" 2>/dev/null; then
+        local agent_models=("opus" "opus" "sonnet" "sonnet")
         for i in "${!AGENT_PANE_AGENTS[@]}"; do
             local agent="${AGENT_PANE_AGENTS[$i]}"
+            local model="${agent_models[$i]}"
             local p=$((pane_base + i))
-            tmux capture-pane -t "${SESSION_AGENTS}:agents.${p}" -p -S - > "${log_dir}/${agent}.log" 2>/dev/null || true
+            local transcript
+            transcript="$(tmux capture-pane -t "${SESSION_AGENTS}:agents.${p}" -p -S - 2>/dev/null || echo "")"
+            if [ -n "$transcript" ]; then
+                echo "$transcript" > "${log_dir}/${agent}.transcript.txt"
+                python3 -c "
+import json
+entry = {
+    'type': 'agent.transcript',
+    'time': '${iso_time}',
+    'session_id': '${session_id}',
+    'agent': '${agent}',
+    'model': '${model}',
+    'transcript_file': '${agent}.transcript.txt',
+    'line_count': len(open('${log_dir}/${agent}.transcript.txt').readlines())
+}
+print(json.dumps(entry))
+" >> "${session_jsonl}"
+            fi
         done
-        log_info "  Saved agent logs (${AGENT_PANE_AGENTS[*]})"
+        log_info "  Saved agent transcripts (${AGENT_PANE_AGENTS[*]})"
     fi
 
-    # Copy queue state for context
+    # Save queue state snapshot
     if [ -d "${HARNECESS_ROOT}/queue" ]; then
         cp -r "${HARNECESS_ROOT}/queue" "${log_dir}/queue" 2>/dev/null || true
+        python3 -c "
+import json, os
+queue_files = []
+for root, dirs, files in os.walk('${log_dir}/queue'):
+    for f in files:
+        queue_files.append(os.path.relpath(os.path.join(root, f), '${log_dir}'))
+entry = {
+    'type': 'snapshot.queue',
+    'time': '${iso_time}',
+    'session_id': '${session_id}',
+    'files': queue_files
+}
+print(json.dumps(entry))
+" >> "${session_jsonl}"
     fi
 
-    # Copy dashboard
+    # Save plan if exists
+    if [ -f "${HARNECESS_ROOT}/.harnecess/plan.yaml" ]; then
+        cp "${HARNECESS_ROOT}/.harnecess/plan.yaml" "${log_dir}/" 2>/dev/null || true
+        python3 -c "
+import json
+entry = {
+    'type': 'snapshot.plan',
+    'time': '${iso_time}',
+    'session_id': '${session_id}',
+    'file': 'plan.yaml'
+}
+print(json.dumps(entry))
+" >> "${session_jsonl}"
+    fi
+
+    # Save dashboard
     if [ -f "${HARNECESS_ROOT}/dashboard.md" ]; then
         cp "${HARNECESS_ROOT}/dashboard.md" "${log_dir}/" 2>/dev/null || true
     fi
 
-    # Copy plan if exists
-    if [ -f "${HARNECESS_ROOT}/.harnecess/plan.yaml" ]; then
-        cp "${HARNECESS_ROOT}/.harnecess/plan.yaml" "${log_dir}/" 2>/dev/null || true
-    fi
-
-    log_success "  Session logs saved to ${log_dir}"
+    log_success "  Session saved: ${log_dir}"
+    log_info "  Query: jq 'select(.agent == \"builder\")' ${log_dir}/session.jsonl"
 }
 
 # =============================================================================
