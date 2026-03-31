@@ -146,6 +146,7 @@ cmd_stop() {
 # Queryable with: jq 'select(.agent == "builder")' logs/sessions/<id>/session.jsonl
 # =============================================================================
 save_session_logs() {
+    local log_type="${1:-stop}"  # "stop" or "snapshot"
     local session_id
     session_id="$(date +%Y-%m-%d)-$(python3 -c 'import uuid; print(str(uuid.uuid4())[:8])')"
     local log_dir="${HARNECESS_ROOT}/logs/sessions/${session_id}"
@@ -162,7 +163,7 @@ save_session_logs() {
     python3 -c "
 import json
 entry = {
-    'type': 'session.stop',
+    'type': 'session.${log_type}',
     'time': '${iso_time}',
     'session_id': '${session_id}',
     'agents': ['lead', 'planner', 'builder', 'checker', 'writer']
@@ -263,6 +264,18 @@ print(json.dumps(entry))
 
     log_success "  Session saved: ${log_dir}"
     log_info "  Query: jq 'select(.agent == \"builder\")' ${log_dir}/session.jsonl"
+}
+
+# =============================================================================
+# Subcommand: snapshot (save logs without stopping)
+# =============================================================================
+cmd_snapshot() {
+    if ! tmux has-session -t "$SESSION_LEAD" 2>/dev/null; then
+        log_error "No harnecess session running."
+        exit 1
+    fi
+    log_action "Taking snapshot of current session..."
+    save_session_logs "snapshot"
 }
 
 # =============================================================================
@@ -699,7 +712,8 @@ show_help() {
     echo ""
     echo "  Usage:"
     echo "    harnecess start [target-repo-path]   Launch all agents"
-    echo "    harnecess stop                       Kill all sessions"
+    echo "    harnecess stop                       Kill all sessions and save logs"
+    echo "    harnecess snapshot                   Save logs without stopping"
     echo "    harnecess status                     Show agent status"
     echo "    harnecess -h | --help                Show this help"
     echo ""
@@ -737,6 +751,9 @@ case "${1:-}" in
         ;;
     status)
         cmd_status
+        ;;
+    snapshot)
+        cmd_snapshot
         ;;
     -h|--help|help)
         show_help
