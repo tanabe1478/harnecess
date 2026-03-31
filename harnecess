@@ -441,15 +441,24 @@ cmd_start() {
     # STEP 2: Ensure directory structure
     # =========================================================================
     log_action "Preparing workspace..."
+    mkdir -p "$HARNECESS_ROOT/logs"
+
+    # Reset queue (previous session state must not leak into new session)
+    rm -rf "$HARNECESS_ROOT/queue"
     mkdir -p "$HARNECESS_ROOT/queue/inbox"
     mkdir -p "$HARNECESS_ROOT/queue/reports"
     mkdir -p "$HARNECESS_ROOT/queue/tasks"
-    mkdir -p "$HARNECESS_ROOT/logs"
 
-    # Ensure inbox files exist for all agents
+    # Initialize fresh inbox files for all agents
     for agent in "${AGENTS[@]}"; do
-        [ -f "$HARNECESS_ROOT/queue/inbox/${agent}.yaml" ] || echo "messages:" > "$HARNECESS_ROOT/queue/inbox/${agent}.yaml"
+        echo "messages:" > "$HARNECESS_ROOT/queue/inbox/${agent}.yaml"
     done
+    log_info "  Queue reset (clean state)"
+
+    # Reset .harnecess pipeline state
+    rm -rf "$HARNECESS_ROOT/.harnecess"
+    mkdir -p "$HARNECESS_ROOT/.harnecess"
+    log_info "  Pipeline state reset"
     # Python venv preflight
     # inbox_write.sh, inbox_watcher.sh depend on .venv/bin/python3 with pyyaml
     local VENV_DIR="$HARNECESS_ROOT/.venv"
