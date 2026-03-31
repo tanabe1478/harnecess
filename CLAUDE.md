@@ -124,10 +124,12 @@ The nudge is minimal: `inboxN` (e.g. `inbox3` = 3 unread). That's it.
 
 When you receive `inboxN` (e.g. `inbox3`):
 1. `Read queue/inbox/{your_id}.yaml`
-2. Find all entries with `read: false`
-3. Process each message according to its `type`
-4. Update each processed entry: `read: true` (use Edit tool)
+2. **IMMEDIATELY mark all `read: false` entries as `read: true`** (use Write tool). Do this BEFORE processing. This stops inbox_watcher from sending repeated nudges while you work.
+3. Read the task YAML referenced in the message
+4. Process the task
 5. Resume normal workflow
+
+**CRITICAL**: Step 2 must happen FIRST. If you process the task before marking read: true, inbox_watcher will keep sending `inbox1` nudges that interfere with your work.
 
 ### MANDATORY Post-Task Inbox Check
 
