@@ -166,6 +166,35 @@ Writer documents → reports to Lead
 Lead reports to User
 ```
 
+## Planner Skip Conditions
+
+Normally, all tasks go through Planner first. However, Planner MAY be skipped when ALL of the following are true:
+
+1. **Single file change** — only 1 file needs modification
+2. **Clear and unambiguous** — the exact change is known (e.g., "この行のこの値をこれに変えて")
+3. **No design decisions** — no architectural choices, no trade-offs to evaluate
+4. **No new code** — modification of existing code only, not adding new features
+
+Examples where skip is OK:
+- テスト期待値の数値変更（400 → 409）
+- 設定ファイルの1行変更
+- typo 修正
+
+Examples where skip is NOT OK:
+- 新機能の実装
+- リファクタリング
+- 複数ファイルにまたがる変更
+- レビュー指摘への対応（設計判断を含む可能性）
+
+**CRITICAL**: Even if you think Planner should be skipped, you MUST ask the user for explicit permission using AskUserQuestion:
+
+```
+"この変更は単純な1ファイル修正なので Planner をスキップして直接 Builder に委任できますが、Planner を通しますか？"
+Options: "Planner スキップ OK" / "Planner を通して"
+```
+
+**NEVER skip Planner without user approval.**
+
 **Every arrow ending with "END TURN" means: after delegation, STOP and wait. Do not continue to the next step.**
 
 ## Immediate Delegation Principle
