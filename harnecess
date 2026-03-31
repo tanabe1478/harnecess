@@ -126,6 +126,9 @@ FORMATION_EOF
 cmd_stop() {
     log_action "Stopping harnecess sessions..."
 
+    # Save session logs before killing
+    save_session_logs
+
     # Kill inbox watchers
     pkill -f "inbox_watcher.sh" 2>/dev/null || true
     pkill -f "inotifywait.*queue/inbox" 2>/dev/null || true
@@ -135,6 +138,52 @@ cmd_stop() {
     tmux kill-session -t "$SESSION_LEAD" 2>/dev/null && log_info "  Killed session: $SESSION_LEAD" || log_info "  Session $SESSION_LEAD not found"
 
     log_success "All harnecess sessions stopped."
+}
+
+# =============================================================================
+# Save session logs (called before stop)
+# =============================================================================
+save_session_logs() {
+    local timestamp
+    timestamp="$(date +%Y%m%d_%H%M%S)"
+    local log_dir="${HARNECESS_ROOT}/logs/sessions/${timestamp}"
+    mkdir -p "${log_dir}"
+
+    local pane_base
+    pane_base=$(tmux show-options -gv pane-base-index 2>/dev/null || echo 0)
+
+    # Save lead pane log
+    if tmux has-session -t "$SESSION_LEAD" 2>/dev/null; then
+        tmux capture-pane -t "${SESSION_LEAD}:main" -p -S - > "${log_dir}/lead.log" 2>/dev/null || true
+        log_info "  Saved lead log"
+    fi
+
+    # Save agent pane logs
+    if tmux has-session -t "$SESSION_AGENTS" 2>/dev/null; then
+        for i in "${!AGENT_PANE_AGENTS[@]}"; do
+            local agent="${AGENT_PANE_AGENTS[$i]}"
+            local p=$((pane_base + i))
+            tmux capture-pane -t "${SESSION_AGENTS}:agents.${p}" -p -S - > "${log_dir}/${agent}.log" 2>/dev/null || true
+        done
+        log_info "  Saved agent logs (${AGENT_PANE_AGENTS[*]})"
+    fi
+
+    # Copy queue state for context
+    if [ -d "${HARNECESS_ROOT}/queue" ]; then
+        cp -r "${HARNECESS_ROOT}/queue" "${log_dir}/queue" 2>/dev/null || true
+    fi
+
+    # Copy dashboard
+    if [ -f "${HARNECESS_ROOT}/dashboard.md" ]; then
+        cp "${HARNECESS_ROOT}/dashboard.md" "${log_dir}/" 2>/dev/null || true
+    fi
+
+    # Copy plan if exists
+    if [ -f "${HARNECESS_ROOT}/.harnecess/plan.yaml" ]; then
+        cp "${HARNECESS_ROOT}/.harnecess/plan.yaml" "${log_dir}/" 2>/dev/null || true
+    fi
+
+    log_success "  Session logs saved to ${log_dir}"
 }
 
 # =============================================================================
