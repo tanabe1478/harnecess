@@ -245,13 +245,27 @@ print(json.dumps(entry))
     # Save plan if exists
     if [ -f "${HARNECESS_ROOT}/.harnecess/plan.yaml" ]; then
         cp "${HARNECESS_ROOT}/.harnecess/plan.yaml" "${log_dir}/" 2>/dev/null || true
+
+        # Also copy native Claude Code plan .md if referenced
+        local plan_md
+        plan_md="$("${HARNECESS_ROOT}/.venv/bin/python3" -c "
+import yaml
+with open('${HARNECESS_ROOT}/.harnecess/plan.yaml') as f:
+    d = yaml.safe_load(f)
+print(d.get('plan_md_file', ''))
+" 2>/dev/null || echo "")"
+        if [ -n "$plan_md" ] && [ -f "$plan_md" ]; then
+            cp "$plan_md" "${log_dir}/plan_native.md" 2>/dev/null || true
+        fi
+
         python3 -c "
 import json
 entry = {
     'type': 'snapshot.plan',
     'time': '${iso_time}',
     'session_id': '${session_id}',
-    'file': 'plan.yaml'
+    'file': 'plan.yaml',
+    'plan_md_file': '${plan_md}'
 }
 print(json.dumps(entry))
 " >> "${session_jsonl}"

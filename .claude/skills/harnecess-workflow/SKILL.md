@@ -67,11 +67,12 @@ Wait for planner's report in queue/inbox/lead.yaml.
 ### Step 2: Confirm Plan Completion
 
 When planner reports:
-1. Read `.harnecess/plan.yaml`
-2. Tell the user: "Planner の計画が完了しました。plan.yaml の内容:" then show a brief summary
-3. **Do NOT ask for re-approval.** The user already approved in the planner pane. Proceed directly to Step 3.
+1. Read `.harnecess/plan.yaml` — check `plan_md_file` field for native plan location
+2. Tell the user: "Planner の計画が完了しました。" then show a brief summary of tasks
+3. If `plan_md_file` exists, mention: "Native plan: <path>"
+4. **Do NOT ask for re-approval.** The user already approved in the planner pane via AskUserQuestion. Proceed directly to Step 3.
 
-NOTE: The user interacts with planner directly in the csm session. Planner only reports "done" after the user has approved. You do NOT need to re-ask.
+NOTE: The user interacts with planner directly in the csm session via Plan Mode's AskUserQuestion approval loop. Planner only reports "done" after explicit user approval.
 
 ### Step 3: Delegate to Builder
 

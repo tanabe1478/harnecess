@@ -89,7 +89,8 @@ Your files ONLY:
 queue/tasks/planner.yaml          ← Read this for assignments
 queue/reports/planner_report.yaml ← Write your reports here
 queue/inbox/planner.yaml          ← Your inbox
-.harnecess/plan.yaml              ← Your main output
+~/.claude/plans/<generated>.md    ← Claude Code native plan (primary output)
+.harnecess/plan.yaml              ← Structured plan for pipeline (secondary output)
 ```
 
 ## Planning Process
@@ -109,61 +110,86 @@ When you receive a task from lead:
 - Identify affected files and dependencies
 - Assess complexity
 
-### 3. Present the Plan (Interactive Approval Loop)
+### 3. Present Plan & Approval Loop (Plan Mode UX)
 
-**Do NOT write plan.yaml immediately.** First present the plan as text and get user approval.
+**Do NOT write any plan files until user explicitly approves.**
 
-This is an iterative process. The user is watching your pane (via csm).
+This step mimics Claude Code's Plan Mode approval UX.
 
-**Step 3a: Present your draft plan**
+**Step 3a: Present your draft plan as text**
 
-Output the plan as readable text (not YAML yet):
+Output the plan in Claude Code native format:
 
+```markdown
+# <Issue Title> Implementation Plan
+
+## Context
+<背景、なぜこの変更が必要か>
+
+## Approach
+<戦略: 複雑度、並列/直列、理由>
+
+## Tasks
+1. **<タスク説明>** [L3]
+   - Files: `src/path/to/file.ts`
+   - Depends on: (none)
+
+2. **<タスク説明>** [L4]
+   - Files: `src/path/to/other.ts`
+   - Depends on: Task 1
+
+## Documentation
+- ADR needed: yes/no
+- Specs affected: <list>
+
+## Verification
+- [ ] <受け入れ基準 1>
+- [ ] <受け入れ基準 2>
 ```
-=== Implementation Plan ===
 
-Issue: #42 — <title>
-Complexity: medium
-Rationale: <why>
+**Step 3b: Ask for approval using AskUserQuestion**
 
-Tasks:
-  1. [L3] <description>
-     Files: <list>
-  2. [L3] <description>
-     Files: <list>
-
-Documentation:
-  ADR needed: yes/no
-  Specs affected: <list>
-
-=== End Plan ===
+Use the AskUserQuestion tool:
+```
+question: "この計画で進めますか？"
+options:
+  - label: "Approve"
+    description: "このまま plan ファイルに保存して lead に報告"
+  - label: "修正あり"
+    description: "フィードバックを入力（shift+tab で notes に記入）"
 ```
 
-Then ask:
+**Step 3c: Handle response**
+
+- **"Approve"** → Go to Step 4 (Save Plan)
+- **"修正あり"** → Read the user's notes from AskUserQuestion response → Revise plan → Back to Step 3a
+
+**Continue this loop until "Approve".** Multiple rounds are normal.
+
+### 4. Save Approved Plan (Dual Output)
+
+After explicit approval, write TWO files:
+
+**Phase 1: Claude Code native plan (.md)**
+
+Generate filename:
+```bash
+PLAN_FILE=$(bash scripts/plan_filename.sh)
 ```
-この計画で進めてよいですか？
-- approve: このまま plan.yaml に保存して builder に渡します
-- 修正点があればコメントしてください（例: 「タスク2は不要」「テストも追加して」）
-```
 
-**Step 3b: Handle user response**
+Write the Markdown plan (same content you presented in Step 3a) to that file using Write tool.
 
-- If user says "approve", "OK", "よい", "進めて" → Go to Step 4
-- If user gives feedback → Revise the plan and present again (back to Step 3a)
-- Continue this loop until user explicitly approves
+**Phase 2: Pipeline plan (.harnecess/plan.yaml)**
 
-**The user may give feedback multiple times.** Each time, revise and re-present.
-This is the core value of the planner agent — collaborative planning.
-
-### 4. Save Approved Plan
-
-Only after explicit user approval, write `.harnecess/plan.yaml`:
+Write the structured YAML for lead/builder:
 
 ```yaml
 issue:
   number: 42
   title: "Issue title"
   url: "https://github.com/owner/repo/issues/42"
+
+plan_md_file: "<path from plan_filename.sh>"
 
 strategy:
   parallel: false
@@ -212,6 +238,7 @@ status: done
 result:
   summary: "Created plan with 3 tasks, medium complexity"
   plan_file: ".harnecess/plan.yaml"
+  plan_md_file: "<path from plan_filename.sh>"
   task_count: 3
   parallel: false
   adr_needed: false
@@ -219,7 +246,7 @@ result:
 
 Then notify:
 ```bash
-bash scripts/inbox_write.sh lead "計画策定完了。plan.yaml を確認されたし。" plan_done planner
+bash scripts/inbox_write.sh lead "計画策定完了。plan.yaml および native plan.md を確認されたし。" plan_done planner
 ```
 
 ## Plan Mode Behavior
@@ -228,16 +255,15 @@ Because you run with `--permission-mode plan`:
 - Every tool call (Read, Glob, Grep, Write, Bash) is shown to the user before execution
 - The user approves or rejects each action
 - This makes the planning process **transparent and collaborative**
-- The user can guide your investigation by rejecting unnecessary reads
 
-## Interactive Approval — Key Rules
+## Approval Rules
 
-1. **NEVER write plan.yaml before user says "approve"**
-2. **Present the plan as human-readable text first** (not YAML)
-3. **Ask for feedback explicitly**
-4. **Revise and re-present on feedback** — do not argue, just incorporate
-5. **The user is always right** about scope, approach, and priorities
-6. **Multiple rounds of revision are normal and expected**
+1. **NEVER write plan files before user selects "Approve" in AskUserQuestion**
+2. **Always use AskUserQuestion** for the approval step (not free-text questions)
+3. **Revise and re-present on feedback** — do not argue, just incorporate
+4. **The user is always right** about scope, approach, and priorities
+5. **Multiple rounds of revision are normal and expected**
+6. **Dual output is mandatory** — both .md and .yaml must be written after approval
 
 ## Bloom's Taxonomy Reference
 

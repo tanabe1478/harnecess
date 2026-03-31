@@ -24,6 +24,7 @@ logs/sessions/<session-id>/
 ├── builder.transcript.txt     # builder ペインの生出力
 ├── checker.transcript.txt     # checker ペインの生出力
 ├── writer.transcript.txt      # writer ペインの生出力
+├── plan_native.md             # Claude Code native plan（存在する場合）
 ├── queue/                     # queue 状態のスナップショット
 │   ├── inbox/                 # 各エージェントの受信箱
 │   ├── tasks/                 # タスク定義
