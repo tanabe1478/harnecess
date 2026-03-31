@@ -358,11 +358,67 @@ cmd_status() {
         echo "     (no harnecess sessions)"
     fi
 
-    # Inbox watchers
+    # Watchers
     echo ""
     local watcher_count
     watcher_count=$(pgrep -f "inbox_watcher.sh" 2>/dev/null | wc -l | tr -d ' ')
-    echo -e "  ${_c_yellow}Inbox Watchers:${_c_reset} ${watcher_count} running"
+    local state_watcher_count
+    state_watcher_count=$(pgrep -f "state_watcher.sh" 2>/dev/null | wc -l | tr -d ' ')
+    echo -e "  ${_c_yellow}Watchers:${_c_reset} inbox=${watcher_count} state=${state_watcher_count}"
+
+    # Pipeline state
+    echo ""
+    local state_file="${HARNECESS_ROOT}/queue/state.yaml"
+    if [ -f "$state_file" ]; then
+        echo -e "  ${_c_yellow}Pipeline State:${_c_reset}"
+        python3 -c "
+import yaml
+from datetime import datetime, timezone
+
+with open('${state_file}') as f:
+    state = yaml.safe_load(f) or {}
+
+current = state.get('current_state', 'unknown')
+prev = state.get('previous_state', '-')
+ts = state.get('timestamp', '')
+
+elapsed = ''
+if ts:
+    try:
+        t = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        secs = int((datetime.now(timezone.utc) - t).total_seconds())
+        if secs < 60:
+            elapsed = f'{secs}s ago'
+        elif secs < 3600:
+            elapsed = f'{secs // 60}m ago'
+        else:
+            elapsed = f'{secs // 3600}h ago'
+    except:
+        elapsed = ts
+
+print(f'     Current: {current} ({elapsed})')
+print(f'     Previous: {prev}')
+" 2>/dev/null || echo "     (unable to read state)"
+
+        # Show history
+        local history_file="${HARNECESS_ROOT}/queue/state_history.yaml"
+        if [ -f "$history_file" ]; then
+            echo -e "  ${_c_yellow}History:${_c_reset}"
+            python3 -c "
+import yaml
+with open('${history_file}') as f:
+    h = yaml.safe_load(f) or {}
+transitions = h.get('transitions', [])
+for t in transitions[-8:]:
+    fr = t.get('from', '-')
+    to = t.get('state', '?')
+    ts = t.get('timestamp', '')
+    print(f'     {fr} → {to}  ({ts}')
+" 2>/dev/null || true
+        fi
+    else
+        echo -e "  ${_c_yellow}Pipeline State:${_c_reset} (not started)"
+    fi
 
     echo ""
 }

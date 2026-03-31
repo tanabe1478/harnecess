@@ -14,7 +14,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 QUEUE_DIR="${SCRIPT_DIR}/queue"
 STATE_FILE="${QUEUE_DIR}/state.yaml"
 HISTORY_FILE="${QUEUE_DIR}/state_history.yaml"
+PIPELINE_FILE="${SCRIPT_DIR}/pipeline/default.yaml"
 INBOX_WRITE="${SCRIPT_DIR}/scripts/inbox_write.sh"
+PYTHON="$PYTHON"
 
 # Agent → tmux pane mapping
 declare -A AGENT_PANES=(
@@ -45,6 +47,82 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [state_watcher] $*" >&2
 }
 
+# Validate state transition against pipeline definition
+validate_transition() {
+    local from_state="$1"
+    local to_state="$2"
+
+    if [ ! -f "$PIPELINE_FILE" ]; then
+        log "WARNING: Pipeline file not found, skipping validation"
+        return 0
+    fi
+
+    "$PYTHON" -c "
+import yaml, sys
+
+with open('${PIPELINE_FILE}') as f:
+    pipeline = yaml.safe_load(f)
+
+from_state = '${from_state}'
+to_state = '${to_state}'
+
+# Find current state in pipeline
+for state in pipeline.get('states', []):
+    if state['name'] == from_state:
+        valid_targets = [t['to'] for t in state.get('transitions', [])]
+        if to_state in valid_targets:
+            sys.exit(0)  # Valid
+        else:
+            print(f'INVALID: {from_state} → {to_state}. Valid: {valid_targets}', file=sys.stderr)
+            sys.exit(1)  # Invalid
+
+# from_state not found (e.g., idle, initial)
+sys.exit(0)
+" 2>&1
+}
+
+# Check timeouts for current state
+check_timeout() {
+    if [ ! -f "$STATE_FILE" ] || [ ! -f "$PIPELINE_FILE" ]; then
+        return
+    fi
+
+    "$PYTHON" -c "
+import yaml, sys
+from datetime import datetime, timezone
+
+with open('${STATE_FILE}') as f:
+    state = yaml.safe_load(f) or {}
+
+with open('${PIPELINE_FILE}') as f:
+    pipeline = yaml.safe_load(f)
+
+current = state.get('current_state', 'idle')
+timestamp_str = state.get('timestamp', '')
+if not timestamp_str:
+    sys.exit(0)
+
+# Find timeout for current state
+timeout_sec = 0
+for s in pipeline.get('states', []):
+    if s['name'] == current:
+        timeout_sec = s.get('timeout_seconds', 0)
+        break
+
+if timeout_sec <= 0:
+    sys.exit(0)
+
+try:
+    ts = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+    elapsed = (datetime.now(timezone.utc) - ts).total_seconds()
+    if elapsed > timeout_sec:
+        remaining = int(elapsed - timeout_sec)
+        print(f'TIMEOUT:{current}:{int(elapsed)}:{timeout_sec}')
+except:
+    pass
+" 2>/dev/null
+}
+
 # Update state.yaml
 update_state() {
     local new_state="$1"
@@ -53,7 +131,7 @@ update_state() {
 
     local current_state=""
     if [ -f "$STATE_FILE" ]; then
-        current_state="$("${SCRIPT_DIR}/.venv/bin/python3" -c "
+        current_state="$("$PYTHON" -c "
 import yaml
 with open('${STATE_FILE}') as f:
     d = yaml.safe_load(f) or {}
@@ -61,7 +139,17 @@ print(d.get('current_state', ''))
 " 2>/dev/null || echo "")"
     fi
 
-    "${SCRIPT_DIR}/.venv/bin/python3" -c "
+    # Validate transition
+    if [ -n "$current_state" ]; then
+        local validation
+        validation="$(validate_transition "$current_state" "$new_state" 2>&1 || true)"
+        if echo "$validation" | grep -q "INVALID"; then
+            log "BLOCKED: $validation"
+            return 1
+        fi
+    fi
+
+    "$PYTHON" -c "
 import yaml, os
 
 state_file = '${STATE_FILE}'
@@ -143,7 +231,7 @@ process_event() {
         fi
 
         local status
-        status="$("${SCRIPT_DIR}/.venv/bin/python3" -c "
+        status="$("$PYTHON" -c "
 import yaml
 with open('${filepath}') as f:
     d = yaml.safe_load(f) or {}
@@ -153,7 +241,7 @@ print(task.get('status', ''))
 
         if [ "$status" = "assigned" ]; then
             local task_id
-            task_id="$("${SCRIPT_DIR}/.venv/bin/python3" -c "
+            task_id="$("$PYTHON" -c "
 import yaml
 with open('${filepath}') as f:
     d = yaml.safe_load(f) or {}
@@ -188,6 +276,21 @@ log "Watching: ${QUEUE_DIR}/tasks/ and ${QUEUE_DIR}/reports/"
 # Initialize state
 mkdir -p "$(dirname "$STATE_FILE")"
 update_state "idle"
+
+# Background timeout checker (runs every 30 seconds)
+(
+    while true; do
+        sleep 30
+        timeout_result="$(check_timeout)"
+        if [ -n "$timeout_result" ]; then
+            IFS=':' read -r _ state elapsed timeout_sec <<< "$timeout_result"
+            log "TIMEOUT: ${state} has been active for ${elapsed}s (limit: ${timeout_sec}s)"
+            notify_agent "lead" "TIMEOUT: ${state} が ${elapsed} 秒経過（制限: ${timeout_sec}秒）。csm でエージェントの状態を確認してください。"
+        fi
+    done
+) &
+TIMEOUT_PID=$!
+trap "kill $TIMEOUT_PID 2>/dev/null" EXIT
 
 # Detect OS and select watcher
 if [ "$(uname -s)" = "Darwin" ]; then

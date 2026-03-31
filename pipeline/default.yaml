@@ -1,0 +1,79 @@
+name: harnecess-default
+version: "1.0"
+description: "Standard development pipeline: plan → build → review → PR → document"
+
+initial_state: idle
+
+states:
+  - name: idle
+    description: "タスク待ち"
+    transitions:
+      - to: planning
+        trigger: task_received
+      - to: building
+        trigger: planner_skip_approved
+        requires_user_approval: true
+
+  - name: planning
+    description: "Planner が計画策定中"
+    agent: planner
+    timeout_seconds: 600
+    transitions:
+      - to: plan_review
+        trigger: planner_report_done
+
+  - name: plan_review
+    description: "Lead がユーザーと計画をレビュー中"
+    timeout_seconds: 0  # no timeout (user interaction)
+    transitions:
+      - to: building
+        trigger: plan_approved
+
+  - name: building
+    description: "Builder が実装中"
+    agent: builder
+    timeout_seconds: 1800
+    transitions:
+      - to: reviewing
+        trigger: builder_report_done
+
+  - name: reviewing
+    description: "Checker がレビュー中"
+    agent: checker
+    timeout_seconds: 600
+    transitions:
+      - to: pr_creating
+        trigger: checker_approved
+      - to: fix
+        trigger: checker_request_changes
+
+  - name: fix
+    description: "Builder が修正中"
+    agent: builder
+    timeout_seconds: 1800
+    transitions:
+      - to: reviewing
+        trigger: builder_report_done
+
+  - name: pr_creating
+    description: "Lead が PR 作成中"
+    timeout_seconds: 300
+    transitions:
+      - to: documenting
+        trigger: pr_created
+      - to: complete
+        trigger: no_docs_needed
+
+  - name: documenting
+    description: "Writer がドキュメント更新中"
+    agent: writer
+    timeout_seconds: 300
+    transitions:
+      - to: complete
+        trigger: writer_report_done
+
+  - name: complete
+    description: "全工程完了"
+    transitions:
+      - to: idle
+        trigger: reset
